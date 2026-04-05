@@ -1,143 +1,166 @@
-# Reliable Recording Chunking Pipeline
+# Swades AI - Reliable Recording Pipeline
 
-An assignment for building a reliable chunking setup that ensures recording data stays accurate in all cases — no data loss, no silent failures.
+A fault-tolerant audio recording system that guarantees **zero data loss**. Built for the Swades AI Hackathon.
 
-## How It Works
+## Overview
+
+Recording audio in chunks with network reliability is challenging. This project implements a pipeline that ensures recordings are never lost—even during network failures, browser crashes, or service outages.
+
+### The Problem
+
+When recording audio and uploading in chunks:
+- Network drops can lose partial recordings
+- Browser crashes before upload = data gone
+- Bucket failures leave orphaned database records
+- Retries can cause duplicates
+
+### The Solution
 
 ```
-Client (Browser)
-    │
-    ├── 1. Record & chunk data on the client side
-    ├── 2. Store chunks in OPFS (Origin Private File System)
-    ├── 3. Upload chunks to a storage bucket
-    ├── 4. On success → acknowledge (ack) to the database
-    │
-    └── Recovery: if DB has ack but chunk is missing from bucket
-        └── Re-send from OPFS → bucket
+Browser → OPFS → Bucket → Database (ack only after bucket confirms)
 ```
 
-**Main objective:** In all cases, the recording data stays accurate. OPFS acts as the durable client-side buffer — chunks are only cleared after the bucket and DB are both confirmed in sync.
+Chunks are persisted to OPFS *before* upload. The database is only acknowledged *after* the bucket confirms receipt.
 
-### Flow Details
+## Features
 
-1. **Client-side chunking** — Recording data is split into chunks in the browser
-2. **OPFS storage** — Each chunk is persisted to the Origin Private File System before any network call, so nothing is lost if the tab closes or the network drops
-3. **Bucket upload** — Chunks are uploaded to a storage bucket (can be a local bucket for testing, e.g. MinIO or a local S3-compatible store)
-4. **DB acknowledgment** — Once the bucket confirms receipt, an ack record is written to the database
-5. **Reconciliation** — If the DB shows an ack but the chunk is missing from the bucket (e.g. bucket purge, replication lag), the client re-uploads from OPFS to restore consistency
+- **Client-side chunking** - 5-second WAV chunks at 16kHz/16-bit PCM
+- **OPFS persistence** - Durable browser storage before any network call
+- **Idempotent uploads** - Safe retries with unique chunk IDs and checksums
+- **Ordered acknowledgment** - DB write only after bucket confirms
+- **Auto-reconciliation** - Detects and repairs missing chunks automatically
 
 ## Tech Stack
 
-- **Next.js** — Frontend (App Router)
-- **Hono** — Backend API server
-- **Bun** — Runtime
-- **Drizzle ORM + PostgreSQL** — Database
-- **TailwindCSS + shadcn/ui** — UI
-- **Turborepo** — Monorepo build system
+| Layer | Technology |
+|-------|------------|
+| Frontend | Next.js 16, React 19, TailwindCSS, shadcn/ui |
+| Backend | Hono.js, Node.js |
+| Database | PostgreSQL, Drizzle ORM |
+| Storage | MinIO (S3-compatible) |
+| Monorepo | Turborepo |
 
 ## Getting Started
 
+### Prerequisites
+
+- Node.js v18+
+- PostgreSQL v14+
+- MinIO or any S3-compatible storage
+
+### Installation
+
 ```bash
+# Clone and install
 npm install
-```
 
-### Database Setup
+# Configure environment
+cp apps/server/.env.example apps/server/.env
+# Edit .env with your credentials
 
-1. Make sure you have a PostgreSQL database set up.
-2. Update your `apps/server/.env` with your PostgreSQL connection details.
-3. Apply the schema:
+# Start MinIO
+minio.exe server C:\minio-data --console-address ":9001"
+# Create bucket named 'recordings' via http://localhost:9001
 
-```bash
+# Create database
+psql -U postgres -c "CREATE DATABASE recording_db;"
+
+# Push schema
 npm run db:push
-```
 
-### Run Development
-
-```bash
+# Start development
 npm run dev
 ```
 
-- Web app: [http://localhost:3001](http://localhost:3001)
-- API server: [http://localhost:3000](http://localhost:3000)
+**Web App:** http://localhost:3001  
+**API Server:** http://localhost:3000
 
-## Load Testing
+### Environment Variables
 
-Target: **300,000 requests** to validate the chunking pipeline under heavy load.
-
-### Setup
-
-Use a load testing tool like [k6](https://k6.io), [autocannon](https://github.com/mcollina/autocannon), or [artillery](https://artillery.io) to simulate concurrent chunk uploads.
-
-Example with **k6**:
-
-```js
-import http from "k6/http";
-import { check } from "k6";
-
-export const options = {
-  scenarios: {
-    chunk_uploads: {
-      executor: "constant-arrival-rate",
-      rate: 5000,           // 5,000 req/s
-      timeUnit: "1s",
-      duration: "1m",       // → 300K requests in 60s
-      preAllocatedVUs: 500,
-      maxVUs: 1000,
-    },
-  },
-};
-
-export default function () {
-  const payload = JSON.stringify({
-    chunkId: `chunk-${__VU}-${__ITER}`,
-    data: "x".repeat(1024), // 1KB dummy chunk
-  });
-
-  const res = http.post("http://localhost:3000/api/chunks/upload", payload, {
-    headers: { "Content-Type": "application/json" },
-  });
-
-  check(res, {
-    "status 200": (r) => r.status === 200,
-  });
-}
+```env
+DATABASE_URL=postgresql://user:password@localhost:5432/recording_db
+CORS_ORIGIN=http://localhost:3001
+BUCKET_ENDPOINT=http://localhost:9000
+BUCKET_REGION=us-east-1
+BUCKET_NAME=recordings
+BUCKET_ACCESS_KEY=minioadmin
+BUCKET_SECRET_KEY=minioadmin
+BUCKET_PUBLIC_URL=http://localhost:9000/recordings
+NEXT_PUBLIC_SERVER_URL=http://localhost:3000/api
 ```
 
-Run:
+## How It Works
 
-```bash
-k6 run load-test.js
-```
+### Data Flow
 
-### What to Validate
+1. **Record** - User clicks record, audio chunks are created every 5 seconds
+2. **Persist** - Each chunk is saved to OPFS immediately
+3. **Upload** - Chunks are uploaded to S3 bucket
+4. **Acknowledge** - Database record created only after bucket confirms success
+5. **Cleanup** - OPFS chunk deleted only after both bucket + DB confirmed
 
-- **No data loss** — every ack in the DB has a matching chunk in the bucket
-- **OPFS recovery** — chunks survive client disconnects and can be re-uploaded
-- **Throughput** — server handles sustained 5K req/s without dropping chunks
-- **Consistency** — reconciliation catches and repairs any bucket/DB mismatches after the run
+### Reliability Guarantees
+
+| Failure Scenario | How It's Handled |
+|-----------------|------------------|
+| Network drop during upload | Chunk stays in OPFS, retry on reconnect |
+| Browser crash | Chunks survive in OPFS, re-upload on reload |
+| Bucket failure | Upload fails, no DB ack written |
+| DB write fails | Chunk in bucket orphaned, reconciliation repairs |
+| Chunk missing from bucket | Reconciliation detects and triggers re-upload |
 
 ## Project Structure
 
 ```
-recoding-assignment/
+.
 ├── apps/
-│   ├── web/         # Frontend (Next.js) — chunking, OPFS, upload logic
-│   └── server/      # Backend API (Hono) — bucket upload, DB ack
+│   ├── web/           # Next.js frontend
+│   │   └── src/
+│   │       ├── app/           # Pages and layouts
+│   │       ├── components/     # UI components
+│   │       ├── hooks/         # Recording & upload hooks
+│   │       └── lib/           # OPFS utilities
+│   └── server/        # Hono API server
+│       └── src/
+│           ├── routes/        # API endpoints
+│           └── lib/           # Storage client
 ├── packages/
-│   ├── ui/          # Shared shadcn/ui components and styles
-│   ├── db/          # Drizzle ORM schema & queries
-│   ├── env/         # Type-safe environment config
-│   └── config/      # Shared TypeScript config
+│   ├── ui/            # Shared shadcn components
+│   ├── db/            # Drizzle schema
+│   └── env/           # Environment validation
+└── turbo.json         # Monorepo config
 ```
+
+## API Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/session` | Create recording session |
+| POST | `/api/chunks/upload` | Upload audio chunk |
+| GET | `/api/chunks/status/:id` | Check chunk acknowledgment |
+| POST | `/api/chunks/verify/:id` | Verify session integrity |
+| POST | `/api/reconcile/check/:id` | Check chunk health |
+| POST | `/api/reconcile/repair/:id` | Trigger repair for session |
 
 ## Available Scripts
 
-- `npm run dev` — Start all apps in development mode
-- `npm run build` — Build all apps
-- `npm run dev:web` — Start only the web app
-- `npm run dev:server` — Start only the server
-- `npm run check-types` — TypeScript type checking
-- `npm run db:push` — Push schema changes to database
-- `npm run db:generate` — Generate database client/types
-- `npm run db:migrate` — Run database migrations
-- `npm run db:studio` — Open database studio UI
+```bash
+npm run dev          # Start all apps
+npm run build        # Build all apps
+npm run db:push      # Push schema to database
+npm run db:studio    # Open Drizzle Studio
+npm run check        # Run linter
+npm run fix          # Fix linting issues
+```
+
+## Testing
+
+1. Navigate to http://localhost:3001/recorder
+2. Click "Start Recording" and speak for 10-15 seconds
+3. Click "Stop & Upload"
+4. Verify chunks appear in MinIO under `sessions/<id>/chunks/`
+5. Check database tables: `sessions`, `chunks`, `chunk_acks`
+
+## License
+
+MIT

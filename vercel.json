@@ -1,0 +1,8 @@
+{
+  "workspaces": [
+    {
+      "name": "web",
+      "path": "apps/web"
+    }
+  ]
+}

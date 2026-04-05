@@ -86,8 +86,8 @@ export function useRecorder(options: UseRecorderOptions = {}) {
 
   statusRef.current = status
 
-  const flushChunk = useCallback(() => {
-    if (samplesRef.current.length === 0) return
+  const flushChunk = useCallback((): WavChunk | null => {
+    if (samplesRef.current.length === 0) return null
 
     const totalLen = samplesRef.current.reduce((n, b) => n + b.length, 0)
     const merged = new Float32Array(totalLen)
@@ -109,6 +109,7 @@ export function useRecorder(options: UseRecorderOptions = {}) {
       timestamp: Date.now(),
     }
     setChunks((prev) => [...prev, chunk])
+    return chunk
   }, [])
 
   const start = useCallback(async () => {
@@ -234,5 +235,5 @@ export function useRecorder(options: UseRecorderOptions = {}) {
     }
   }, [])
 
-  return { status, start, stop, pause, resume, chunks, elapsed, stream, clearChunks }
+  return { status, start, stop, pause, resume, chunks, elapsed, stream, clearChunks, flushChunk }
 }

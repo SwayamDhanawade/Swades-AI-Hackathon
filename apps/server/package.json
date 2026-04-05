@@ -1,15 +1,17 @@
 {
   "name": "server",
   "type": "module",
-  "main": "src/index.ts",
+  "main": "dist/index.js",
   "scripts": {
-    "build": "tsdown",
+    "build": "tsc -p tsconfig.json",
     "check-types": "tsc -b",
-    "compile": "bun build --compile --minify --sourcemap --bytecode ./src/index.ts --outfile server",
-    "dev": "bun run --hot src/index.ts",
-    "start": "bun run dist/index.mjs"
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.700.0",
+    "@aws-sdk/lib-storage": "^3.700.0",
+    "@hono/node-server": "^1.19.12",
     "@my-better-t-app/db": "*",
     "@my-better-t-app/env": "*",
     "dotenv": "^17.2.2",
@@ -18,8 +20,8 @@
   },
   "devDependencies": {
     "@my-better-t-app/config": "*",
-    "@types/bun": "^1.3.4",
-    "tsdown": "^0.16.5",
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
     "typescript": "^5"
   }
 }
